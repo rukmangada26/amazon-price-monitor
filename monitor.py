@@ -25,6 +25,8 @@ def fetch_price(asin: str) -> int:
         params={"key": api_key, "domain": _KEEPA_DOMAIN, "asin": asin, "stats": 1},
         timeout=15,
     )
+    if not response.ok:
+        print(f"[Keepa error] status={response.status_code} body={response.text[:500]!r}")
     response.raise_for_status()
     data = response.json()
     products = data.get("products", [])
