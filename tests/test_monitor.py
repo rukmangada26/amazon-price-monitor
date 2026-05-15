@@ -86,8 +86,9 @@ from monitor import main
 
 
 def test_main_skips_if_flag_exists(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
-    (tmp_path / "notified.flag").write_text("already notified")
+    flag = tmp_path / "notified.flag"
+    flag.write_text("already notified")
+    monkeypatch.setattr("monitor.FLAG_FILE", flag)
 
     with patch("monitor.fetch_price") as mock_fetch:
         main()
@@ -96,7 +97,8 @@ def test_main_skips_if_flag_exists(tmp_path, monkeypatch):
 
 
 def test_main_does_not_notify_when_price_at_or_above_threshold(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    flag = tmp_path / "notified.flag"
+    monkeypatch.setattr("monitor.FLAG_FILE", flag)
     monkeypatch.setenv("RECIPIENT_EMAILS", "a@gmail.com,b@gmail.com,c@gmail.com")
 
     with patch("monitor.fetch_price", return_value=35000), \
@@ -104,11 +106,12 @@ def test_main_does_not_notify_when_price_at_or_above_threshold(tmp_path, monkeyp
         main()
 
     mock_notify.assert_not_called()
-    assert not (tmp_path / "notified.flag").exists()
+    assert not flag.exists()
 
 
 def test_main_notifies_and_commits_flag_when_price_below_threshold(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    flag = tmp_path / "notified.flag"
+    monkeypatch.setattr("monitor.FLAG_FILE", flag)
     monkeypatch.setenv("GMAIL_SENDER", "sender@gmail.com")
     monkeypatch.setenv("GMAIL_APP_PASSWORD", "app-password-123")
     monkeypatch.setenv("RECIPIENT_EMAILS", "a@gmail.com,b@gmail.com,c@gmail.com")
@@ -119,17 +122,17 @@ def test_main_notifies_and_commits_flag_when_price_below_threshold(tmp_path, mon
         main()
 
     mock_notify.assert_called_once_with(34000, ["a@gmail.com", "b@gmail.com", "c@gmail.com"])
-    assert (tmp_path / "notified.flag").exists()
+    assert flag.exists()
 
-    # Verify all three git commands ran
     git_commands = [call[0][0] for call in mock_run.call_args_list]
-    assert ["git", "add", "notified.flag"] in git_commands
+    assert ["git", "add", str(flag)] in git_commands
     assert any("commit" in cmd for cmd in git_commands)
     assert any("push" in cmd for cmd in git_commands)
 
 
 def test_main_exits_with_error_when_fetch_fails(tmp_path, monkeypatch):
-    monkeypatch.chdir(tmp_path)
+    flag = tmp_path / "notified.flag"
+    monkeypatch.setattr("monitor.FLAG_FILE", flag)
     monkeypatch.setenv("RECIPIENT_EMAILS", "a@gmail.com")
 
     with patch("monitor.fetch_price", side_effect=ValueError("Price element not found")), \

@@ -12,7 +12,7 @@ PRODUCT_URL = (
     "/dp/B0CWVDN3HZ"
 )
 THRESHOLD = 35000
-FLAG_FILE = Path("notified.flag")
+FLAG_FILE = Path(__file__).parent / "notified.flag"
 
 _HEADERS = {
     "User-Agent": (
@@ -64,7 +64,7 @@ def main() -> None:
         print("Already notified. Exiting.")
         return
 
-    recipients = os.environ.get("RECIPIENT_EMAILS", "").split(",")
+    recipients = os.environ["RECIPIENT_EMAILS"].split(",")
     price = fetch_price(PRODUCT_URL)
     print(f"Current price: ₹{price:,}")
 
