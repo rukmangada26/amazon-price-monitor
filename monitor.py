@@ -69,6 +69,9 @@ def fetch_price(url: str) -> int:
                 price = _parse_price(element.get_text())
                 if price:
                     return price
+    # Log the response snippet to help diagnose what Amazon returned
+    print(f"[DEBUG] Response title: {soup.title.string if soup.title else 'no title'}")
+    print(f"[DEBUG] Response snippet: {response.text[:1000]!r}")
     raise ValueError("Price element not found on page")
 
 
