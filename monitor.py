@@ -57,3 +57,31 @@ def send_notification(price: int, recipients: list[str]) -> None:
         server.starttls()
         server.login(sender, password)
         server.sendmail(sender, recipients, msg.as_string())
+
+
+def main() -> None:
+    if FLAG_FILE.exists():
+        print("Already notified. Exiting.")
+        return
+
+    recipients = os.environ.get("RECIPIENT_EMAILS", "").split(",")
+    price = fetch_price(PRODUCT_URL)
+    print(f"Current price: ₹{price:,}")
+
+    if price < THRESHOLD:
+        print(f"Price below threshold. Sending notification...")
+        send_notification(price, recipients)
+        FLAG_FILE.write_text(f"Notified at ₹{price:,}\n")
+        subprocess.run(["git", "add", str(FLAG_FILE)], check=True)
+        subprocess.run(
+            ["git", "commit", "-m", f"chore: price dropped to ₹{price:,}, notified"],
+            check=True,
+        )
+        subprocess.run(["git", "push"], check=True)
+        print("Notification sent and flag committed.")
+    else:
+        print(f"Price ₹{price:,} is above threshold ₹{THRESHOLD:,}. No action.")
+
+
+if __name__ == "__main__":
+    main()

@@ -80,3 +80,61 @@ def test_send_notification_subject_contains_price(monkeypatch):
 
     _, _, raw_message = mock_server.sendmail.call_args[0]
     assert "33,500" in raw_message
+
+
+from monitor import main
+
+
+def test_main_skips_if_flag_exists(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "notified.flag").write_text("already notified")
+
+    with patch("monitor.fetch_price") as mock_fetch:
+        main()
+
+    mock_fetch.assert_not_called()
+
+
+def test_main_does_not_notify_when_price_at_or_above_threshold(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RECIPIENT_EMAILS", "a@gmail.com,b@gmail.com,c@gmail.com")
+
+    with patch("monitor.fetch_price", return_value=35000), \
+         patch("monitor.send_notification") as mock_notify:
+        main()
+
+    mock_notify.assert_not_called()
+    assert not (tmp_path / "notified.flag").exists()
+
+
+def test_main_notifies_and_commits_flag_when_price_below_threshold(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("GMAIL_SENDER", "sender@gmail.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "app-password-123")
+    monkeypatch.setenv("RECIPIENT_EMAILS", "a@gmail.com,b@gmail.com,c@gmail.com")
+
+    with patch("monitor.fetch_price", return_value=34000), \
+         patch("monitor.send_notification") as mock_notify, \
+         patch("monitor.subprocess.run") as mock_run:
+        main()
+
+    mock_notify.assert_called_once_with(34000, ["a@gmail.com", "b@gmail.com", "c@gmail.com"])
+    assert (tmp_path / "notified.flag").exists()
+
+    # Verify all three git commands ran
+    git_commands = [call[0][0] for call in mock_run.call_args_list]
+    assert ["git", "add", "notified.flag"] in git_commands
+    assert any("commit" in cmd for cmd in git_commands)
+    assert any("push" in cmd for cmd in git_commands)
+
+
+def test_main_exits_with_error_when_fetch_fails(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("RECIPIENT_EMAILS", "a@gmail.com")
+
+    with patch("monitor.fetch_price", side_effect=ValueError("Price element not found")), \
+         patch("monitor.send_notification") as mock_notify:
+        with pytest.raises(ValueError, match="Price element not found"):
+            main()
+
+    mock_notify.assert_not_called()
