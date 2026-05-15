@@ -1,78 +1,44 @@
 import os
-import re
 import smtplib
 import subprocess
-import time
 from email.message import EmailMessage
 from pathlib import Path
 
 import requests
-from bs4 import BeautifulSoup
 
 PRODUCT_URL = (
     "https://www.amazon.in/Voltas-Inverter-Copper-Adjustable-Anti-dust"
     "/dp/B0CWVDN3HZ"
 )
+ASIN = "B0CWVDN3HZ"
 THRESHOLD = 35000
 FLAG_FILE = Path(__file__).parent / "notified.flag"
 
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": (
-        "text/html,application/xhtml+xml,application/xml;"
-        "q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8"
-    ),
-    "Accept-Language": "en-IN,en-GB;q=0.9,en;q=0.8",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "Sec-Fetch-User": "?1",
-    "Cache-Control": "max-age=0",
-}
-
-# Tried in order; first match wins. Amazon changes layout occasionally.
-_PRICE_SELECTORS = [
-    "span.a-price-whole",
-    ".a-price .a-offscreen",
-    "#corePrice_feature_div .a-price .a-offscreen",
-    "#priceblock_ourprice",
-    "#priceblock_dealprice",
-]
+_KEEPA_DOMAIN = 10  # Amazon India
 
 
-def _parse_price(text: str) -> int | None:
-    """Return the integer rupee amount from a price string, or None if unparseable."""
-    integer_part = text.split(".")[0]
-    digits = re.sub(r"[^\d]", "", integer_part)
-    return int(digits) if digits else None
-
-
-def fetch_price(url: str) -> int:
-    # Retry up to 3 times — Amazon bot-detection pages return HTTP 200 with no
-    # price element; a subsequent request often gets through.
-    for attempt in range(3):
-        if attempt > 0:
-            time.sleep(10)
-        response = requests.get(url, headers=_HEADERS, timeout=15)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.text, "html.parser")
-        for selector in _PRICE_SELECTORS:
-            element = soup.select_one(selector)
-            if element:
-                price = _parse_price(element.get_text())
-                if price:
-                    return price
-    # Log the response snippet to help diagnose what Amazon returned
-    print(f"[DEBUG] Response title: {soup.title.string if soup.title else 'no title'}")
-    print(f"[DEBUG] Response snippet: {response.text[:1000]!r}")
-    raise ValueError("Price element not found on page")
+def fetch_price(asin: str) -> int:
+    """Return current Amazon India price in rupees via Keepa API."""
+    api_key = os.environ["KEEPA_API_KEY"]
+    response = requests.get(
+        "https://api.keepa.com/product",
+        params={"key": api_key, "domain": _KEEPA_DOMAIN, "asin": asin, "stats": 1},
+        timeout=15,
+    )
+    response.raise_for_status()
+    data = response.json()
+    products = data.get("products", [])
+    if not products:
+        raise ValueError("Product not found in Keepa response")
+    current = products[0].get("stats", {}).get("current", [])
+    # current[0] = Amazon direct price; current[1] = Marketplace New
+    # Keepa uses -1 for "unavailable". Prices are in paise (INR minor unit).
+    amazon_price = current[0] if len(current) > 0 else -1
+    if amazon_price < 0 and len(current) > 1:
+        amazon_price = current[1]
+    if amazon_price < 0:
+        raise ValueError("Price not available on Keepa for this ASIN")
+    return amazon_price // 100
 
 
 def send_notification(price: int, recipients: list[str]) -> None:
@@ -105,11 +71,11 @@ def main() -> None:
         return
 
     recipients = os.environ["RECIPIENT_EMAILS"].split(",")
-    price = fetch_price(PRODUCT_URL)
+    price = fetch_price(ASIN)
     print(f"Current price: ₹{price:,}")
 
     if price < THRESHOLD:
-        print(f"Price below threshold. Sending notification...")
+        print("Price below threshold. Sending notification...")
         send_notification(price, recipients)
         FLAG_FILE.write_text(f"Notified at ₹{price:,}\n")
         subprocess.run(["git", "add", str(FLAG_FILE)], check=True)

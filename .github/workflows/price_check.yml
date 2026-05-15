@@ -23,7 +23,7 @@ jobs:
           python-version: '3.12'
 
       - name: Install dependencies
-        run: pip install requests==2.32.3 beautifulsoup4==4.12.3
+        run: pip install requests==2.32.3
 
       - name: Configure git identity
         run: |
@@ -32,6 +32,7 @@ jobs:
 
       - name: Run price monitor
         env:
+          KEEPA_API_KEY: ${{ secrets.KEEPA_API_KEY }}
           GMAIL_SENDER: ${{ secrets.GMAIL_SENDER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAILS: ${{ secrets.RECIPIENT_EMAILS }}
