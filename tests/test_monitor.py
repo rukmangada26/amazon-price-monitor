@@ -7,18 +7,25 @@ from monitor import fetch_price, send_notification, main
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _csv_pairs(price: int) -> list:
+    """Build a minimal Keepa csv pair list: [fake_time, price]."""
+    return [1000, price]
+
+
 def _keepa_response(amazon_price: int = 3499000, new_price: int = -1) -> MagicMock:
     """Mock a Keepa API response. Prices are in paise (INR minor unit)."""
     mock = MagicMock()
+    mock.ok = True
     mock.raise_for_status = MagicMock()
     mock.json.return_value = {
-        "products": [{"stats": {"current": [amazon_price, new_price, -1, 12345]}}]
+        "products": [{"csv": [_csv_pairs(amazon_price), _csv_pairs(new_price)]}]
     }
     return mock
 
 
 def _empty_keepa_response() -> MagicMock:
     mock = MagicMock()
+    mock.ok = True
     mock.raise_for_status = MagicMock()
     mock.json.return_value = {"products": []}
     return mock
@@ -60,11 +67,11 @@ def test_fetch_price_calls_keepa_with_correct_params(monkeypatch):
     monkeypatch.setenv("KEEPA_API_KEY", "my-secret-key")
     with patch("monitor.requests.get", return_value=_keepa_response()) as mock_get:
         fetch_price("B0CWVDN3HZ")
-    call_kwargs = mock_get.call_args
-    params = call_kwargs[1]["params"]
+    params = mock_get.call_args[1]["params"]
     assert params["key"] == "my-secret-key"
     assert params["domain"] == 10
     assert params["asin"] == "B0CWVDN3HZ"
+    assert "stats" not in params
 
 
 # ---------------------------------------------------------------------------
