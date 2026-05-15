@@ -7,27 +7,27 @@ from monitor import fetch_price, send_notification, main
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _csv_pairs(price: int) -> list:
-    """Build a minimal Keepa csv pair list: [fake_time, price]."""
-    return [1000, price]
+MOCK_HTML_WITH_PRICE = """
+<html><body>
+  <span class="a-price-whole">34,990<span class="a-decimal-separator">.</span></span>
+</body></html>
+"""
+
+MOCK_HTML_OFFSCREEN = """
+<html><body>
+  <span class="a-price"><span class="a-offscreen">₹34,990.00</span></span>
+</body></html>
+"""
+
+MOCK_HTML_NO_PRICE = "<html><body><p>Page temporarily unavailable</p></body></html>"
 
 
-def _keepa_response(amazon_price: int = 3499000, new_price: int = -1) -> MagicMock:
-    """Mock a Keepa API response. Prices are in paise (INR minor unit)."""
+def _mock_response(html: str, status: int = 200) -> MagicMock:
     mock = MagicMock()
-    mock.ok = True
+    mock.ok = status < 400
+    mock.status_code = status
+    mock.text = html
     mock.raise_for_status = MagicMock()
-    mock.json.return_value = {
-        "products": [{"csv": [_csv_pairs(amazon_price), _csv_pairs(new_price)]}]
-    }
-    return mock
-
-
-def _empty_keepa_response() -> MagicMock:
-    mock = MagicMock()
-    mock.ok = True
-    mock.raise_for_status = MagicMock()
-    mock.json.return_value = {"products": []}
     return mock
 
 
@@ -35,43 +35,35 @@ def _empty_keepa_response() -> MagicMock:
 # fetch_price
 # ---------------------------------------------------------------------------
 
-def test_fetch_price_converts_paise_to_rupees(monkeypatch):
-    monkeypatch.setenv("KEEPA_API_KEY", "test-key")
-    with patch("monitor.requests.get", return_value=_keepa_response(3499000)):
-        price = fetch_price("B0CWVDN3HZ")
+def test_fetch_price_returns_integer(monkeypatch):
+    monkeypatch.setenv("SCRAPERAPI_KEY", "test-key")
+    with patch("monitor.requests.get", return_value=_mock_response(MOCK_HTML_WITH_PRICE)):
+        price = fetch_price("https://www.amazon.in/dp/B0CWVDN3HZ")
     assert price == 34990
 
 
-def test_fetch_price_falls_back_to_marketplace_when_amazon_unavailable(monkeypatch):
-    monkeypatch.setenv("KEEPA_API_KEY", "test-key")
-    with patch("monitor.requests.get", return_value=_keepa_response(-1, 3350000)):
-        price = fetch_price("B0CWVDN3HZ")
-    assert price == 33500
+def test_fetch_price_parses_offscreen_selector(monkeypatch):
+    monkeypatch.setenv("SCRAPERAPI_KEY", "test-key")
+    with patch("monitor.requests.get", return_value=_mock_response(MOCK_HTML_OFFSCREEN)):
+        price = fetch_price("https://www.amazon.in/dp/B0CWVDN3HZ")
+    assert price == 34990
 
 
-def test_fetch_price_raises_when_product_not_in_keepa(monkeypatch):
-    monkeypatch.setenv("KEEPA_API_KEY", "test-key")
-    with patch("monitor.requests.get", return_value=_empty_keepa_response()):
-        with pytest.raises(ValueError, match="Product not found"):
-            fetch_price("B0CWVDN3HZ")
+def test_fetch_price_raises_when_price_element_missing(monkeypatch):
+    monkeypatch.setenv("SCRAPERAPI_KEY", "test-key")
+    with patch("monitor.requests.get", return_value=_mock_response(MOCK_HTML_NO_PRICE)):
+        with pytest.raises(ValueError, match="Price element not found"):
+            fetch_price("https://www.amazon.in/dp/B0CWVDN3HZ")
 
 
-def test_fetch_price_raises_when_both_prices_unavailable(monkeypatch):
-    monkeypatch.setenv("KEEPA_API_KEY", "test-key")
-    with patch("monitor.requests.get", return_value=_keepa_response(-1, -1)):
-        with pytest.raises(ValueError, match="Price not available"):
-            fetch_price("B0CWVDN3HZ")
-
-
-def test_fetch_price_calls_keepa_with_correct_params(monkeypatch):
-    monkeypatch.setenv("KEEPA_API_KEY", "my-secret-key")
-    with patch("monitor.requests.get", return_value=_keepa_response()) as mock_get:
-        fetch_price("B0CWVDN3HZ")
+def test_fetch_price_calls_scraperapi_with_correct_params(monkeypatch):
+    monkeypatch.setenv("SCRAPERAPI_KEY", "my-secret-key")
+    with patch("monitor.requests.get", return_value=_mock_response(MOCK_HTML_WITH_PRICE)) as mock_get:
+        fetch_price("https://www.amazon.in/dp/B0CWVDN3HZ")
     params = mock_get.call_args[1]["params"]
-    assert params["key"] == "my-secret-key"
-    assert params["domain"] == 10
-    assert params["asin"] == "B0CWVDN3HZ"
-    assert "stats" not in params
+    assert params["api_key"] == "my-secret-key"
+    assert params["country_code"] == "in"
+    assert "amazon.in" in params["url"]
 
 
 # ---------------------------------------------------------------------------
@@ -169,9 +161,9 @@ def test_main_exits_with_error_when_fetch_fails(tmp_path, monkeypatch):
     monkeypatch.setattr("monitor.FLAG_FILE", flag)
     monkeypatch.setenv("RECIPIENT_EMAILS", "a@gmail.com")
 
-    with patch("monitor.fetch_price", side_effect=ValueError("Price not available")), \
+    with patch("monitor.fetch_price", side_effect=ValueError("Price element not found")), \
          patch("monitor.send_notification") as mock_notify:
-        with pytest.raises(ValueError, match="Price not available"):
+        with pytest.raises(ValueError, match="Price element not found"):
             main()
 
     mock_notify.assert_not_called()

@@ -1,55 +1,56 @@
 import os
+import re
 import smtplib
 import subprocess
 from email.message import EmailMessage
 from pathlib import Path
 
 import requests
+from bs4 import BeautifulSoup
 
 PRODUCT_URL = (
     "https://www.amazon.in/Voltas-Inverter-Copper-Adjustable-Anti-dust"
     "/dp/B0CWVDN3HZ"
 )
-ASIN = "B0CWVDN3HZ"
 THRESHOLD = 35000
 FLAG_FILE = Path(__file__).parent / "notified.flag"
 
-_KEEPA_DOMAIN = 10  # Amazon India
+# Tried in order; first match with a parseable price wins.
+_PRICE_SELECTORS = [
+    "span.a-price-whole",
+    ".a-price .a-offscreen",
+    "#corePrice_feature_div .a-price .a-offscreen",
+    "#priceblock_ourprice",
+    "#priceblock_dealprice",
+]
 
 
-def _latest_csv_price(csv_pairs: list) -> int:
-    """Return the last non-(-1) price from a Keepa csv pair list [time, price, ...], or -1."""
-    # Prices sit at odd indices (1, 3, 5, …); walk backwards to find the most recent.
-    for i in range(len(csv_pairs) - 1, 0, -2):
-        if csv_pairs[i] != -1:
-            return csv_pairs[i]
-    return -1
+def _parse_price(text: str) -> int | None:
+    """Return the integer rupee amount from a price string, or None if unparseable."""
+    integer_part = text.split(".")[0]
+    digits = re.sub(r"[^\d]", "", integer_part)
+    return int(digits) if digits else None
 
 
-def fetch_price(asin: str) -> int:
-    """Return current Amazon India price in rupees via Keepa API."""
-    api_key = os.environ["KEEPA_API_KEY"]
+def fetch_price(url: str) -> int:
+    """Fetch the current Amazon India price via ScraperAPI (bypasses bot detection)."""
+    api_key = os.environ["SCRAPERAPI_KEY"]
     response = requests.get(
-        "https://api.keepa.com/product",
-        params={"key": api_key, "domain": _KEEPA_DOMAIN, "asin": asin},
-        timeout=15,
+        "http://api.scraperapi.com",
+        params={"api_key": api_key, "url": url, "country_code": "in"},
+        timeout=60,
     )
     if not response.ok:
-        print(f"[Keepa] status={response.status_code} body={response.text[:500]!r}")
+        print(f"[ScraperAPI] status={response.status_code} body={response.text[:300]!r}")
     response.raise_for_status()
-    data = response.json()
-    products = data.get("products", [])
-    if not products:
-        raise ValueError("Product not found in Keepa response")
-    # csv[0] = Amazon direct price history; csv[1] = Marketplace New
-    # Keepa stores prices as [keepaTime, price, keepaTime, price, …] in paise.
-    csv = products[0].get("csv") or []
-    amazon_price = _latest_csv_price(csv[0]) if len(csv) > 0 else -1
-    if amazon_price < 0:
-        amazon_price = _latest_csv_price(csv[1]) if len(csv) > 1 else -1
-    if amazon_price < 0:
-        raise ValueError("Price not available on Keepa for this ASIN")
-    return amazon_price // 100
+    soup = BeautifulSoup(response.text, "html.parser")
+    for selector in _PRICE_SELECTORS:
+        element = soup.select_one(selector)
+        if element:
+            price = _parse_price(element.get_text())
+            if price:
+                return price
+    raise ValueError("Price element not found on page")
 
 
 def send_notification(price: int, recipients: list[str]) -> None:
@@ -82,7 +83,7 @@ def main() -> None:
         return
 
     recipients = os.environ["RECIPIENT_EMAILS"].split(",")
-    price = fetch_price(ASIN)
+    price = fetch_price(PRODUCT_URL)
     print(f"Current price: ₹{price:,}")
 
     if price < THRESHOLD:
