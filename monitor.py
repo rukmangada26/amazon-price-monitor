@@ -1,7 +1,7 @@
 import os
 import smtplib
 import subprocess
-from email.mime.text import MIMEText
+from email.message import EmailMessage
 from pathlib import Path
 
 import requests
@@ -33,3 +33,27 @@ def fetch_price(url: str) -> int:
         raise ValueError("Price element not found on page")
     raw = element.get_text().replace(",", "").replace(".", "").strip()
     return int(raw)
+
+
+def send_notification(price: int, recipients: list[str]) -> None:
+    sender = os.environ["GMAIL_SENDER"]
+    password = os.environ["GMAIL_APP_PASSWORD"]
+
+    subject = f"Price Alert: Voltas AC now ₹{price:,}"
+    body = (
+        f"The Voltas Inverter AC price has dropped below your threshold.\n\n"
+        f"Current price: ₹{price:,}\n"
+        f"Your threshold: ₹{THRESHOLD:,}\n\n"
+        f"Buy now: {PRODUCT_URL}"
+    )
+
+    msg = EmailMessage()
+    msg["Subject"] = subject
+    msg["From"] = sender
+    msg["To"] = ", ".join(recipients)
+    msg.set_content(body)
+
+    with smtplib.SMTP("smtp.gmail.com", 587) as server:
+        server.starttls()
+        server.login(sender, password)
+        server.sendmail(sender, recipients, msg.as_string())

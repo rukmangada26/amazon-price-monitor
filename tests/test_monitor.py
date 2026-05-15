@@ -38,3 +38,45 @@ def test_fetch_price_raises_when_price_element_missing():
     with patch("monitor.requests.get", return_value=_mock_response(MOCK_HTML_NO_PRICE)):
         with pytest.raises(ValueError, match="Price element not found"):
             fetch_price("https://www.amazon.in/dp/B0CWVDN3HZ")
+
+
+from monitor import send_notification
+
+
+def test_send_notification_connects_to_gmail_and_sends(monkeypatch):
+    monkeypatch.setenv("GMAIL_SENDER", "sender@gmail.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "app-password-123")
+    recipients = ["a@gmail.com", "b@gmail.com", "c@gmail.com"]
+
+    with patch("monitor.smtplib.SMTP") as mock_smtp_class:
+        mock_server = MagicMock()
+        mock_smtp_class.return_value.__enter__ = MagicMock(return_value=mock_server)
+        mock_smtp_class.return_value.__exit__ = MagicMock(return_value=False)
+
+        send_notification(34000, recipients)
+
+    mock_smtp_class.assert_called_once_with("smtp.gmail.com", 587)
+    mock_server.starttls.assert_called_once()
+    mock_server.login.assert_called_once_with("sender@gmail.com", "app-password-123")
+
+    sendmail_args = mock_server.sendmail.call_args[0]
+    assert sendmail_args[0] == "sender@gmail.com"
+    assert sendmail_args[1] == recipients
+    assert "34,000" in sendmail_args[2]
+    assert "35,000" in sendmail_args[2]
+    assert "B0CWVDN3HZ" in sendmail_args[2]
+
+
+def test_send_notification_subject_contains_price(monkeypatch):
+    monkeypatch.setenv("GMAIL_SENDER", "sender@gmail.com")
+    monkeypatch.setenv("GMAIL_APP_PASSWORD", "app-password-123")
+
+    with patch("monitor.smtplib.SMTP") as mock_smtp_class:
+        mock_server = MagicMock()
+        mock_smtp_class.return_value.__enter__ = MagicMock(return_value=mock_server)
+        mock_smtp_class.return_value.__exit__ = MagicMock(return_value=False)
+
+        send_notification(33500, ["x@gmail.com"])
+
+    _, _, raw_message = mock_server.sendmail.call_args[0]
+    assert "33,500" in raw_message
