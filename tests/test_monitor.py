@@ -35,9 +35,20 @@ def test_fetch_price_strips_commas():
 
 
 def test_fetch_price_raises_when_price_element_missing():
-    with patch("monitor.requests.get", return_value=_mock_response(MOCK_HTML_NO_PRICE)):
+    with patch("monitor.requests.get", return_value=_mock_response(MOCK_HTML_NO_PRICE)), \
+         patch("monitor.time.sleep"):  # skip retry delays
         with pytest.raises(ValueError, match="Price element not found"):
             fetch_price("https://www.amazon.in/dp/B0CWVDN3HZ")
+
+
+def test_fetch_price_parses_offscreen_price():
+    """Fallback selector: .a-price .a-offscreen gives '₹34,990.00'"""
+    html = """<html><body>
+    <span class="a-price"><span class="a-offscreen">₹34,990.00</span></span>
+    </body></html>"""
+    with patch("monitor.requests.get", return_value=_mock_response(html)):
+        price = fetch_price("https://www.amazon.in/dp/B0CWVDN3HZ")
+    assert price == 34990
 
 
 from monitor import send_notification
