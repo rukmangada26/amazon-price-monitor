@@ -12,7 +12,7 @@ PRODUCT_URL = (
     "https://www.amazon.in/Voltas-Inverter-Copper-Adjustable-Anti-dust"
     "/dp/B0CWVDN3HZ"
 )
-THRESHOLD = 35000
+THRESHOLD = 45000  # TEST: temporarily raised to trigger notification
 FLAG_FILE = Path(__file__).parent / "notified.flag"
 
 # Tried in order; first match with a parseable price wins.
